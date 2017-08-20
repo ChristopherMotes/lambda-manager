@@ -1,0 +1,355 @@
+{  
+  "AWSTemplateFormatVersion":"2010-09-09",
+  "Description": "Creates the Lambda Infrastructure for a given Lambda Stack",
+  "Resources":{  
+    "CodeCommitRepository":{  
+      "Type":"AWS::CodeCommit::Repository",
+      "DeletionPolicy" : "Retain",
+      "Properties":{  
+        "RepositoryDescription":"The core configuration for CloudFormation",
+        "RepositoryName" : { "Ref" : "AWS::StackName" }
+      }
+    },
+    "LambdaLogGroup" : {
+      "Type" : "AWS::Logs::LogGroup",
+      "Properties" : {
+        "LogGroupName" : { "Fn::Join" : [ "", [ "/aws/lambda/", { "Ref" : "AWS::StackName" } ] ] },
+        "RetentionInDays" : 400
+      }
+    },
+    "ProductionLogGroup" : {
+      "Type" : "AWS::Logs::LogGroup",
+      "Properties" : {
+        "LogGroupName" : { "Fn::Join" : [ "", [ "/aws/codebuild/", { "Fn::Join" : [ "-", [ { "Ref" : "AWS::StackName" }, "production" ] ] } ] ] },
+        "RetentionInDays" : 400
+      }
+    },
+    "CodeBuildRole": {  
+      "Type":"AWS::IAM::Role",
+      "Properties":{  
+        "AssumeRolePolicyDocument":{  
+          "Version":"2012-10-17",
+          "Statement":[  
+            {  
+              "Effect":"Allow",
+              "Principal":{  
+                "Service":"codebuild.amazonaws.com"
+              },
+              "Action":"sts:AssumeRole"
+            }
+          ]
+        },
+        "Path":"/",
+        "Policies":[  
+          {  
+            "PolicyName":"codebuild-lambda-policy",
+            "PolicyDocument":{  
+              "Version":"2012-10-17",
+              "Statement":[  
+                {  
+                  "Effect":"Allow",
+                  "Resource":[  
+                    { "Fn::GetAtt" : [ "ProductionLogGroup", "Arn" ] }
+                  ],
+                  "Action":[  
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ]
+                },
+                {  
+                  "Effect":"Allow",
+                  "Resource":[ { "Fn::GetAtt" : [ "CodeCommitRepository", "Arn" ] } ],
+                  "Action":[  
+                    "codecommit:BatchGetRepositories",
+                    "codecommit:CreateBranch",
+                    "codecommit:CreateRepository",
+                    "codecommit:Get*",
+                    "codecommit:GitPull",
+                    "codecommit:GitPush",
+                    "codecommit:List*",
+                    "codecommit:Put*",
+                    "codecommit:Test*",
+                    "codecommit:Update*"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:Get*",
+                    "s3:List*"
+                  ],
+                  "Resource": [
+                    { "Fn::Join" : [ "", [ { "Fn::ImportValue" : "artifact-lambda-infrastructure-bucketarn" }, "/*" ] ] }
+                  ]
+                },
+                {  
+                  "Effect":"Allow",
+                  "Action":"s3:*",
+                  "Resource":[  
+                    { "Fn::ImportValue" : "lambda-infrastructure-bucketarn" }, 
+                    { "Fn::Join" : [ "", [ { "Fn::ImportValue" : "lambda-infrastructure-bucketarn" } , "/*" ] ] }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "LambdaInfrastructureCodeBuildProduction" : {  
+      "Type":"AWS::CodeBuild::Project",
+      "Properties":{  
+        "Artifacts":{  
+          "Type":"CODEPIPELINE"
+        },
+        "Description":"Populates the S3 buckets",
+        "Environment":{  
+          "ComputeType":"BUILD_GENERAL1_SMALL",
+          "EnvironmentVariables":[  
+            {  
+              "Name":"LambdaInfrastructureBucket",
+              "Value": { "Fn::ImportValue" : "lambda-infrastructure-bucketname" }
+            },
+            {  
+              "Name":"FunctionName",
+              "Value": { "Ref" : "AWS::StackName" }
+            }
+          ],
+          "Image":"aws/codebuild/ubuntu-base:14.04",
+          "Type":"LINUX_CONTAINER"
+        },
+        "Name" : { "Fn::Join" : [ "-", [ { "Ref" : "AWS::StackName" }, "production" ] ] },
+        "ServiceRole" : {  
+          "Fn::GetAtt": [  
+            "CodeBuildRole",
+            "Arn"
+          ]
+        },
+        "Source":{  
+          "Type":"CODEPIPELINE"
+        }
+      }
+    },
+    "PipelineRole" : {
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "AssumeRolePolicyDocument": {
+          "Version":"2012-10-17",
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole", 
+              "Principal": {
+                "Service": "codepipeline.amazonaws.com"
+              }, 
+              "Effect": "Allow", 
+              "Sid": ""
+            }
+          ]
+        }, 
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": { "Fn::Join" : [ "-", [ "codepipeline", { "Ref" : "AWS::StackName" } ] ] },
+            "PolicyDocument": {
+              "Version":"2012-10-17",        
+              "Statement": [
+                {
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:GetBucketVersioning",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+                },
+                {
+                  "Action": "s3:PutObject",
+                  "Resource": { "Fn::ImportValue": "artifact-lambda-infrastructure-bucketarn" },
+                  "Effect": "Allow"
+                },
+                {
+                  "Action": [
+                    "codecommit:CancelUploadArchive",
+                    "codecommit:GetBranch",
+                    "codecommit:GetCommit",
+                    "codecommit:GetUploadArchiveStatus",
+                    "codecommit:UploadArchive"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+                },
+                {
+                  "Action": [
+                    "codedeploy:CreateDeployment",
+                    "codedeploy:GetApplicationRevision",
+                    "codedeploy:GetDeployment",
+                    "codedeploy:GetDeploymentConfig",
+                    "codedeploy:RegisterApplicationRevision"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+                },
+                {
+                  "Action": [
+                    "cloudwatch:*",
+                    "s3:*",
+                    "sns:*",
+                    "iam:PassRole"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+                },
+                {
+                  "Action": [
+                    "lambda:InvokeFunction",
+                    "lambda:ListFunctions"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+                },
+                {
+                  "Action": [
+                    "codebuild:BatchGetBuilds",
+                    "codebuild:StartBuild"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Pipeline":{  
+      "Type":"AWS::CodePipeline::Pipeline",
+      "Properties":{  
+        "Name": { "Ref" : "AWS::StackName" },
+        "ArtifactStore":{  
+          "Type":"S3",
+          "Location" : { "Fn::ImportValue" : "artifact-lambda-infrastructure-bucketname" }
+        },
+        "RestartExecutionOnUpdate":"False",
+        "RoleArn" : { "Fn::GetAtt" : ["PipelineRole", "Arn"] },
+        "Stages":[  
+          {  
+            "Name":"Source",
+            "Actions":[  
+              {  
+                "Name":"GitCommit",
+                "ActionTypeId":{  
+                  "Category":"Source",
+                  "Owner":"AWS",
+                  "Provider":"CodeCommit",
+                  "Version":"1"
+                },
+                "Configuration":{  
+                  "BranchName":"master",
+                  "RepositoryName":{  
+                    "Fn::GetAtt":[  
+                      "CodeCommitRepository",
+                      "Name"
+                    ]
+                  }
+                },
+                "OutputArtifacts":[  
+                  {  
+                    "Name":"MyApp"
+                  }
+                ],
+                "RunOrder":1
+              }
+            ]
+          },
+          {  
+            "Name":"BuildProduction",
+            "Actions":[  
+              {  
+                "Name":"CodeBuild",
+                "InputArtifacts":[  
+                  {  
+                    "Name":"MyApp"
+                  }
+                ],
+                "ActionTypeId":{  
+                  "Category":"Build",
+                  "Owner":"AWS",
+                  "Version":"1",
+                  "Provider":"CodeBuild"
+                },
+                "Configuration":{  
+                  "ProjectName":{  
+                    "Ref":"LambdaInfrastructureCodeBuildProduction"
+                  }
+                },
+                "OutputArtifacts":[  
+                  {  
+                    "Name":"MyAppBuildProduction"
+                  }
+                ],
+                "RunOrder":1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "LambdaExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": {"Service": ["lambda.amazonaws.com"]}, "Action": ["sts:AssumeRole"] }]
+        },
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "lambdafunction",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Action": [
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": [
+                  { "Fn::GetAtt" : [ "LambdaLogGroup", "Arn" ] }
+                ],
+                "Effect": "Allow"
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "LambdaFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName" : { "Ref" : "AWS::StackName" },
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt" : ["LambdaExecutionRole", "Arn"] },
+        "Code": {
+          "S3Bucket": { "Fn::ImportValue" : "lambda-infrastructure-bucketname" },
+          "S3Key": { "Fn::Join" : [ "/", [ { "Ref" : "AWS::StackName" }, "lambda.zip" ] ] }
+        },
+        "Runtime": "python2.7",
+        "Timeout": "60"
+      }
+    }
+  },
+  "Outputs" : {
+    "PipelineOutput" : {
+      "Description" : "This is the name of the CodePipeline",
+      "Value" : { "Ref" : "Pipeline" }
+    },
+    "RepositoryName" : {
+      "Description" : "This is the name of the code repository",
+      "Value" : { "Fn::GetAtt" : [ "CodeCommitRepository", "Name" ] }
+    },
+    "RepositoryCloneUrl" : {
+      "Description" : "This is the name of the code repository",
+      "Value" : { "Fn::GetAtt" : [ "CodeCommitRepository", "CloneUrlHttp" ] }
+    }
+  }
+}
