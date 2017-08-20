@@ -7,11 +7,11 @@ The infrastructure.json template creates the required infrastructure bits and th
 ## Templates
 The various templates lay out a CICD stack and a lambda function
 1. Added a simple but valid .zip file with a simple valid index.py
-*. s3 copy the zip file that goes to the lambda-infrastructure bucket with a prefix of the function name
-*. now create the function. It creates a git repository, in codecommit, for your lambda function. Posted as a cloudformation output
-*. Add a buildspec.yaml simliar to below.
-*. create a lambda directory and include index.py and other data in the lambda directory
-*. Push the repository to master
+* s3 copy the zip file that goes to the lambda-infrastructure bucket with a prefix of the function name
+* now create the function. It creates a git repository, in codecommit, for your lambda function. Posted as a cloudformation output
+* Add a buildspec.yaml simliar to below.
+* create a lambda directory and include index.py and other data in the lambda directory
+* Push the repository to master
 
 ## Example Files
 ### basic index.py
